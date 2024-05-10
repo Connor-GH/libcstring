@@ -1,6 +1,26 @@
 module libcstring;
 
-static pragma(inline) size_t floor_base2(size_t i) pure nothrow @nogc {
+extern(C) nothrow @nogc {
+  @trusted void *malloc(size_t size);
+  @trusted void *realloc(void *ptr, size_t size);
+  @trusted void free(void *ptr);
+}
+@trusted T typed_malloc(T)(size_t size) @nogc nothrow {
+  return cast(T)malloc(size);
+}
+@trusted T typed_realloc(T)(T ptr, size_t size) @nogc nothrow {
+  return cast(T)realloc(cast(void *)ptr, size);
+}
+
+@trusted void casted_free(T)(T ptr) @nogc nothrow {
+  free(cast(void *)ptr);
+}
+
+// TODO:
+// - more performance
+// - (probably) add pure
+
+static pragma(inline) size_t floor_base2(size_t i) pure nothrow @safe @nogc {
   import std.math.exponential : log2;
   return 1LU << (cast(size_t)log2(cast(float)i) + 1);
 }
@@ -9,11 +29,11 @@ public alias c_char = char;
 public alias c_string = const(c_char *);
 public alias mut_c_string = c_char *;
 final struct OSString {
-import core.stdc.stdlib : malloc, free, realloc;
-import core.stdc.stdio : stderr, fprintf, printf;
+// strncpy could fail with buffer overrun
+// strlen could fail with buffer overrun
+// strncpy could fail with buffer overrun -- most problematic
 import core.stdc.string : strlen, strncat, strncpy;
   private:
-  align(8):
     enum MALLOC_THRESHOLD = mut_c_string.sizeof + size_t.sizeof + size_t.sizeof;
     bool large_string_allocation = void;
   union OSStr_ {
@@ -25,35 +45,36 @@ import core.stdc.string : strlen, strncat, strncpy;
     }
   }
   static assert(MALLOC_THRESHOLD == 24);
-  OSStr_ OSStr;
+  OSStr_ OSStr = void;
   public @nogc nothrow:
     // small string optimization
-    this(int N)(char[N] str)
+    this(int N)(char[N] str) @trusted
     in (N <= 23) {
       large_string_allocation = false;
       strncpy(cast(mut_c_string)OSStr.small_string, cast(c_string)str, N);
       OSStr.small_string[23] = N; // set length
     }
 
-    this(c_string str) {
+    this(c_string str) @trusted {
       OSStr.len = strlen(str);
       OSStr.capacity = floor_base2(OSStr.len);
       large_string_allocation = true;
-      OSStr.big_string = cast(mut_c_string)malloc(OSStr.capacity);
+      OSStr.big_string = typed_malloc!mut_c_string(OSStr.capacity);
       strncpy(OSStr.big_string, str, OSStr.len + 1);
     }
-    c_string c_str() const {
+    c_string c_str() pure const @trusted {
+      // cast from array to pointer is what causes this to not be @safe
       return large_string_allocation ? OSStr.big_string : cast(c_string)OSStr.small_string;
     }
-    size_t length() const {
+    size_t length() pure const @safe {
       return large_string_allocation ? OSStr.len : cast(size_t)OSStr.small_string[23];
     }
-    // TODO cover the case where OSStr.small_string > MALLOC_THRESHOLD
-    pragma(inline) typeof(this) cat(c_string str) {
+    // deemed trusted and not safe for...various reasons
+    pragma(inline) typeof(this) cat(c_string str) @trusted {
       assert(large_string_allocation ? this.length() < 0xFFFFFFFFFFFF : true);
       if (large_string_allocation) {
         if (strlen(str) + this.length() >= OSStr.capacity) {
-          OSStr.big_string = cast(mut_c_string)realloc(cast(void *)OSStr.big_string, strlen(str) + this.length() + 1);
+          OSStr.big_string = typed_realloc!mut_c_string(OSStr.big_string, strlen(str) + this.length() + 1);
           assert(OSStr.big_string is null);
         }
         OSStr.len += strlen(str) + 1;
@@ -69,53 +90,82 @@ import core.stdc.string : strlen, strncat, strncpy;
         OSStr.len = small_size + strlen(str);
         OSStr.capacity = floor_base2(OSStr.len);
 
-        OSStr.big_string = cast(mut_c_string)malloc(OSStr.capacity);
+        OSStr.big_string = typed_malloc!mut_c_string(OSStr.capacity);
 
+        // copy string over
         strncpy(OSStr.big_string, cast(c_string)small_str_temp, small_size);
         OSStr.big_string = strncat(OSStr.big_string, str, strlen(str));
         large_string_allocation = true;
       }
       return OSString(this.c_str());
     }
+    typeof(this) cat(OSString str) @safe {
+      return this.cat(str.c_str());
+    }
 
-    ~this() {
+    ~this() @trusted {
+      // freeing union memory causes this to be unsafe
       if (large_string_allocation) {
-        free(cast(void *)OSStr.big_string);
+        casted_free(OSStr.big_string);
       }
     }
-  int opCmp(const OSString s) const {
+  int opCmp(ref const OSString s) const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s.c_str(), s.length);
   }
-  int opCmp(const c_string s) const {
+  int opCmp(const c_string s) pure const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s, strlen(s));
   }
-  bool opEquals(const OSString s) const {
+  bool opEquals(ref const OSString s) const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s.c_str(), s.length) == 0;
   }
-  bool opEquals(const c_string s) const {
+  bool opEquals(const c_string s) pure const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s, strlen(s)) == 0;
   }
 
 }
 
+// string equality with c_string
+@safe @nogc nothrow unittest {
+  OSString s = OSString("foo");
+  assert(s == "foo");
+}
+
+// string equality with other OSString
+@safe @nogc nothrow unittest {
+  OSString s1 = OSString("foo");
+  OSString s2 = OSString("foo");
+  assert(s1 == s2);
+  assert(!(s1 > s2));
+  assert(s1 >= s2);
+  assert(!(s1 < s2));
+  assert(s1 <= s2);
+
+  s1 = s1.cat("1");
+  s2 = s2.cat("2");
+  assert(s1 < s2);
+  assert(s1 <= s2);
+  assert(!(s1 >= s2));
+  assert(!(s1 > s2));
+  assert(s1 != s2);
+}
 
 
-unittest {
+//string concatenation
+@safe @nogc nothrow unittest {
   OSString s = OSString("this ");
       s = s.cat("uses @nogc!\n")
            .cat("Amazing!");
   assert(s == "this uses @nogc!\nAmazing!");
+  OSString a1 = OSString("foo");
+  OSString a2 = OSString("bar");
+  a1 = a1.cat(a2);
+  assert(a1 == "foobar");
 }
 
-// 8.8% in ctor
-// 11.04% in cat
-// 0.15% in c_str()
-// 0.07% in length()
-// 9.44% in floor_base2()
 int main(string[] args) {
   import core.stdc.stdio : printf, fprintf, stderr;
   import std.string : toStringz;

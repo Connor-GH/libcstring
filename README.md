@@ -13,6 +13,7 @@ This library is:
 - @nogc
 - nothrow
 - compatible with OpenD
+- compatible with BetterC
 - based on Meta's Folly fbstring library
 
 This library is NOT:

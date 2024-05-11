@@ -1,7 +1,5 @@
 DC ?= gdc
 WNOFLAGS = -Wno-unused-macros -Wno-reserved-identifier
-_DFLAGS ?= $(DFLAGS)
-_LDFLAGS ?= $(LDFLAGS)
 ifeq ($(DC),gdc)
 	_DFLAGS += -march=native -O3 -frelease
 	OF=-o
@@ -10,6 +8,8 @@ else
 	_DFLAGS += -mcpu=native -O -release
 endif
 
+_DFLAGS += $(DFLAGS)
+_LDFLAGS += $(LDFLAGS)
 all: libcstring
 libcstring: remove
 	$(MAKE) remove

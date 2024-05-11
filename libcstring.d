@@ -2,33 +2,39 @@ module libcstring;
 
 extern(C) nothrow @nogc {
   @trusted void *malloc(size_t size);
-  @trusted void *realloc(void *ptr, size_t size);
+  @trusted void *realloc(return void *ptr, size_t size);
   @trusted void free(void *ptr);
 }
-@trusted T typed_malloc(T)(size_t size) @nogc nothrow {
-  return cast(T)malloc(size);
+@trusted T typed_malloc(T)(const size_t size) @nogc nothrow {
+  T ptr = cast(T)malloc(size);
+  assert(ptr !is null);
+  return ptr;
 }
-@trusted T typed_realloc(T)(T ptr, size_t size) @nogc nothrow {
-  return cast(T)realloc(cast(void *)ptr, size);
+@trusted T typed_realloc(T)(T ptr, const size_t size) @nogc nothrow {
+  T my_ptr = cast(T)realloc(cast(void *)ptr, size);
+  assert(my_ptr !is null);
+  return my_ptr;
 }
 
 @trusted void casted_free(T)(T ptr) @nogc nothrow {
+  assert(cast(void *)ptr !is null);
   free(cast(void *)ptr);
 }
 
 // TODO:
 // - more performance
 // - (probably) add pure
+// - add safer versions of string functions
 
-static pragma(inline) size_t floor_base2(size_t i) pure nothrow @safe @nogc {
-  import std.math.exponential : log2;
-  return 1LU << (cast(size_t)log2(cast(float)i) + 1);
+static pragma(inline) size_t floor_base2(const size_t i) nothrow @safe @nogc {
+  import core.stdc.math : log2;
+  return 1LU << (cast(size_t)log2(cast(double)i) + 1);
 }
 
 public alias c_char = char;
 public alias c_string = const(c_char *);
 public alias mut_c_string = c_char *;
-final struct OSString {
+struct OSString {
 // strncpy could fail with buffer overrun
 // strlen could fail with buffer overrun
 // strncpy could fail with buffer overrun -- most problematic
@@ -48,43 +54,43 @@ import core.stdc.string : strlen, strncat, strncpy;
   OSStr_ OSStr = void;
   public @nogc nothrow:
     // small string optimization
-    this(int N)(char[N] str) @trusted
+    this(int N)(in char[N] str) @trusted
     in (N <= 23) {
       large_string_allocation = false;
-      strncpy(cast(mut_c_string)OSStr.small_string, cast(c_string)str, N);
+      strncpy(OSStr.small_string.ptr, str.ptr, N);
       OSStr.small_string[23] = N; // set length
     }
 
-    this(c_string str) @trusted {
+    this(in c_string str) @trusted {
       OSStr.len = strlen(str);
       OSStr.capacity = floor_base2(OSStr.len);
       large_string_allocation = true;
       OSStr.big_string = typed_malloc!mut_c_string(OSStr.capacity);
       strncpy(OSStr.big_string, str, OSStr.len + 1);
     }
-    c_string c_str() pure const @trusted {
+    pragma(inline) c_string c_str() pure const @trusted {
       // cast from array to pointer is what causes this to not be @safe
-      return large_string_allocation ? OSStr.big_string : cast(c_string)OSStr.small_string;
+      return large_string_allocation ? OSStr.big_string : OSStr.small_string.ptr;
     }
-    size_t length() pure const @safe {
+    pragma(inline) size_t length() pure const @safe {
       return large_string_allocation ? OSStr.len : cast(size_t)OSStr.small_string[23];
     }
     // deemed trusted and not safe for...various reasons
-    pragma(inline) typeof(this) cat(c_string str) @trusted {
+    // cannot be pure because the malloc, realloc, and free are not pure
+    typeof(this) cat(c_string str) @trusted {
       assert(large_string_allocation ? this.length() < 0xFFFFFFFFFFFF : true);
       if (large_string_allocation) {
         if (strlen(str) + this.length() >= OSStr.capacity) {
           OSStr.big_string = typed_realloc!mut_c_string(OSStr.big_string, strlen(str) + this.length() + 1);
-          assert(OSStr.big_string is null);
         }
         OSStr.len += strlen(str) + 1;
         OSStr.capacity = floor_base2(OSStr.len);
         OSStr.big_string = strncat(OSStr.big_string, str, strlen(str) + 1);
       } else {
         // copy into temp string
-        size_t small_size = this.length() + 1;
+        immutable size_t small_size = this.length() + 1;
         c_char[MALLOC_THRESHOLD] small_str_temp;
-        strncpy(cast(mut_c_string)small_str_temp, cast(c_string)OSStr.small_string, small_size);
+        strncpy(small_str_temp.ptr, OSStr.small_string.ptr, small_size);
 
         // new length
         OSStr.len = small_size + strlen(str);
@@ -93,7 +99,7 @@ import core.stdc.string : strlen, strncat, strncpy;
         OSStr.big_string = typed_malloc!mut_c_string(OSStr.capacity);
 
         // copy string over
-        strncpy(OSStr.big_string, cast(c_string)small_str_temp, small_size);
+        strncpy(OSStr.big_string, small_str_temp.ptr, small_size);
         OSStr.big_string = strncat(OSStr.big_string, str, strlen(str));
         large_string_allocation = true;
       }
@@ -109,21 +115,22 @@ import core.stdc.string : strlen, strncat, strncpy;
         casted_free(OSStr.big_string);
       }
     }
-  int opCmp(ref const OSString s) const @trusted {
+  pragma(inline) int opCmp(in ref OSString s) const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s.c_str(), s.length);
   }
-  int opCmp(const c_string s) pure const @trusted {
+  pragma(inline) int opCmp(in c_string s) pure const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s, strlen(s));
   }
-  bool opEquals(ref const OSString s) const @trusted {
-    import core.stdc.string : strncmp;
-    return strncmp(this.c_str(), s.c_str(), s.length) == 0;
+  pragma(inline) bool opEquals(in ref OSString s) const @trusted {
+    return this.opCmp(s) == 0;
   }
-  bool opEquals(const c_string s) pure const @trusted {
-    import core.stdc.string : strncmp;
-    return strncmp(this.c_str(), s, strlen(s)) == 0;
+  pragma(inline) bool opEquals(in c_string s) pure const @trusted {
+    return this.opCmp(s) == 0;
+  }
+  size_t toHash() @trusted nothrow @nogc const {
+    return this.length * cast(size_t)this.c_str();
   }
 
 }
@@ -166,7 +173,7 @@ import core.stdc.string : strlen, strncat, strncpy;
   assert(a1 == "foobar");
 }
 
-int main(string[] args) {
+int call_main(string[] args) {
   import core.stdc.stdio : printf, fprintf, stderr;
   import std.string : toStringz;
   import std.datetime.stopwatch;
@@ -187,9 +194,13 @@ int main(string[] args) {
      fprintf(stderr, "%s\n", s.toStringz);
    }
   }
-  auto r = benchmark!(myStr, theirStr)(100);
+
+  auto r = benchmark!(myStr, theirStr)(1000);
   writeln("mine", r[0]);
   writeln("theirs", r[1]);
 
   return 0;
+}
+extern(D) int main(string[] args) {
+  return call_main(args);
 }

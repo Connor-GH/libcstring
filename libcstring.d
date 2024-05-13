@@ -4,6 +4,7 @@ extern(C) nothrow @nogc {
   @trusted void *malloc(size_t size);
   @trusted void *realloc(return void *ptr, size_t size);
   @trusted void free(void *ptr);
+  @trusted double log2(double x);
 }
 @trusted T typed_malloc(T)(const size_t size) @nogc nothrow {
   T ptr = cast(T)malloc(size);
@@ -26,15 +27,14 @@ extern(C) nothrow @nogc {
 // - (probably) add pure
 // - add safer versions of string functions
 
-static pragma(inline) size_t floor_base2(const size_t i) nothrow @safe @nogc {
-  import core.stdc.math : log2;
+extern(C) static size_t floor_base2(const size_t i) nothrow @safe @nogc {
   return 1LU << (cast(size_t)log2(cast(double)i) + 1);
 }
 
 public alias c_char = char;
 public alias c_string = const(c_char *);
 public alias mut_c_string = c_char *;
-struct OSString {
+extern(C) struct OSString {
 // strncpy could fail with buffer overrun
 // strlen could fail with buffer overrun
 // strncpy could fail with buffer overrun -- most problematic
@@ -54,14 +54,14 @@ import core.stdc.string : strlen, strncat, strncpy;
   OSStr_ OSStr = void;
   public @nogc nothrow:
     // small string optimization
-    this(int N)(in char[N] str) @trusted
+    this(int N)(char[N] str) @trusted
     in (N <= 23) {
       large_string_allocation = false;
       strncpy(OSStr.small_string.ptr, str.ptr, N);
       OSStr.small_string[23] = N; // set length
     }
 
-    this(in c_string str) @trusted {
+    this(c_string str) @trusted {
       OSStr.len = strlen(str);
       OSStr.capacity = floor_base2(OSStr.len);
       large_string_allocation = true;
@@ -115,18 +115,18 @@ import core.stdc.string : strlen, strncat, strncpy;
         casted_free(OSStr.big_string);
       }
     }
-  pragma(inline) int opCmp(in ref OSString s) const @trusted {
+  pragma(inline) int opCmp(ref OSString s) const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s.c_str(), s.length);
   }
-  pragma(inline) int opCmp(in c_string s) pure const @trusted {
+  pragma(inline) int opCmp(c_string s) pure const @trusted {
     import core.stdc.string : strncmp;
     return strncmp(this.c_str(), s, strlen(s));
   }
-  pragma(inline) bool opEquals(in ref OSString s) const @trusted {
+  pragma(inline) bool opEquals(ref OSString s) const @trusted {
     return this.opCmp(s) == 0;
   }
-  pragma(inline) bool opEquals(in c_string s) pure const @trusted {
+  pragma(inline) bool opEquals(c_string s) pure const @trusted {
     return this.opCmp(s) == 0;
   }
   size_t toHash() @trusted nothrow @nogc const {
@@ -135,72 +135,42 @@ import core.stdc.string : strlen, strncat, strncpy;
 
 }
 
-// string equality with c_string
-@safe @nogc nothrow unittest {
-  OSString s = OSString("foo");
-  assert(s == "foo");
-}
+version (D_BetterC) {} else {
 
-// string equality with other OSString
-@safe @nogc nothrow unittest {
-  OSString s1 = OSString("foo");
-  OSString s2 = OSString("foo");
-  assert(s1 == s2);
-  assert(!(s1 > s2));
-  assert(s1 >= s2);
-  assert(!(s1 < s2));
-  assert(s1 <= s2);
-
-  s1 = s1.cat("1");
-  s2 = s2.cat("2");
-  assert(s1 < s2);
-  assert(s1 <= s2);
-  assert(!(s1 >= s2));
-  assert(!(s1 > s2));
-  assert(s1 != s2);
-}
-
-
-//string concatenation
-@safe @nogc nothrow unittest {
-  OSString s = OSString("this ");
-      s = s.cat("uses @nogc!\n")
-           .cat("Amazing!");
-  assert(s == "this uses @nogc!\nAmazing!");
-  OSString a1 = OSString("foo");
-  OSString a2 = OSString("bar");
-  a1 = a1.cat(a2);
-  assert(a1 == "foobar");
-}
-
-int call_main(string[] args) {
-  import core.stdc.stdio : printf, fprintf, stderr;
-  import std.string : toStringz;
-  import std.datetime.stopwatch;
-  import std.stdio : writeln;
-  printf("%lu\n", OSString.sizeof);
-  printf("%lu\n", string.sizeof);
-  void myStr() {
-   foreach (arg; args) {
-     OSString s = OSString(arg.toStringz);
-     s = s.cat("HI");
-     fprintf(stderr, "%s\n", s.c_str());
-   }
-  }
-  void theirStr() {
-   foreach (arg; args) {
-     string s = arg;
-     s = s ~ "HI";
-     fprintf(stderr, "%s\n", s.toStringz);
-   }
+  // string equality with c_string
+  @safe @nogc nothrow unittest {
+    OSString s = OSString("foo");
+    assert(s == "foo");
   }
 
-  auto r = benchmark!(myStr, theirStr)(1000);
-  writeln("mine", r[0]);
-  writeln("theirs", r[1]);
+  // string equality with other OSString
+  @safe @nogc nothrow unittest {
+    OSString s1 = OSString("foo");
+    OSString s2 = OSString("foo");
+    assert(s1 == s2);
+    assert(!(s1 > s2));
+    assert(s1 >= s2);
+    assert(!(s1 < s2));
+    assert(s1 <= s2);
 
-  return 0;
-}
-extern(D) int main(string[] args) {
-  return call_main(args);
+    s1 = s1.cat("1");
+    s2 = s2.cat("2");
+    assert(s1 < s2);
+    assert(s1 <= s2);
+    assert(!(s1 >= s2));
+    assert(!(s1 > s2));
+    assert(s1 != s2);
+  }
+
+  //string concatenation
+  @safe @nogc nothrow unittest {
+    OSString s = OSString("this ");
+        s = s.cat("uses @nogc!\n")
+            .cat("Amazing!");
+    assert(s == "this uses @nogc!\nAmazing!");
+    OSString a1 = OSString("foo");
+    OSString a2 = OSString("bar");
+    a1 = a1.cat(a2);
+    assert(a1 == "foobar");
+  }
 }

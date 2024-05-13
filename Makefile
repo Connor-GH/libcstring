@@ -13,7 +13,7 @@ _LDFLAGS += $(LDFLAGS)
 all: libcstring
 libcstring: remove
 	$(MAKE) remove
-	$(DC) $(_DFLAGS) $(OF)$@ $@.d $(_LDFLAGS)
+	$(DC) $(_DFLAGS) $(OF)$@ test.d $@.d $(_LDFLAGS)
 
 remove:
 	@rm -rf $(TARGET)

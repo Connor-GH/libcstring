@@ -1,11 +1,11 @@
 DC ?= gdc
 WNOFLAGS = -Wno-unused-macros -Wno-reserved-identifier
 ifeq ($(DC),gdc)
-	_DFLAGS += -march=native -O3 -frelease
+	_DFLAGS += -march=native -O3
 	OF=-o
 else
 	OF=-of=
-	_DFLAGS += -mcpu=native -O -release
+	_DFLAGS += -mcpu=native -O
 endif
 
 _DFLAGS += $(DFLAGS)

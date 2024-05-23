@@ -23,17 +23,18 @@ extern(C) nothrow @nogc {
 }
 
 // TODO:
-// - more performance
+// - more performance (arena allocator?)
 // - (probably) add pure
 // - add safer versions of string functions
 
-extern(C) static size_t floor_base2(const size_t i) nothrow @safe @nogc {
+static size_t floor_base2(const size_t i) nothrow @safe @nogc {
   return 1LU << (cast(size_t)log2(cast(double)i) + 1);
 }
 
 public alias c_char = char;
 public alias c_string = const(c_char *);
 public alias mut_c_string = c_char *;
+public enum not_found = -1;
 extern(C) struct OSString {
 // strncpy could fail with buffer overrun
 // strlen could fail with buffer overrun
@@ -85,7 +86,7 @@ import core.stdc.string : strlen, strncat, strncpy;
         }
         OSStr.len += strlen(str) + 1;
         OSStr.capacity = floor_base2(OSStr.len);
-        OSStr.big_string = strncat(OSStr.big_string, str, strlen(str) + 1);
+        OSStr.big_string = strncat(OSStr.big_string, str, OSStr.len);
       } else {
         // copy into temp string
         immutable size_t small_size = this.length() + 1;
@@ -107,6 +108,23 @@ import core.stdc.string : strlen, strncat, strncpy;
     }
     typeof(this) cat(OSString str) @safe {
       return this.cat(str.c_str());
+    }
+    size_t find(c_string str) @trusted {
+      size_t match_len = strlen(str);
+      size_t our_len = 0;
+      c_string s = this.c_str();
+      if (match_len > this.length())
+        return not_found;
+      for (size_t i = 0; i < this.length(); i++) {
+        if (s[i] == str[our_len]) {
+          our_len++;
+          if (our_len == match_len)
+            return (i-match_len)+1;
+        } else {
+          our_len = 0;
+        }
+      }
+      return not_found;
     }
 
     ~this() @trusted {
@@ -135,42 +153,54 @@ import core.stdc.string : strlen, strncat, strncpy;
 
 }
 
-version (D_BetterC) {} else {
+// string equality with c_string
+@safe @nogc nothrow unittest {
+  OSString s = OSString("foo");
+  assert(s == "foo");
+}
 
-  // string equality with c_string
-  @safe @nogc nothrow unittest {
-    OSString s = OSString("foo");
-    assert(s == "foo");
-  }
+// string equality with other OSString
+@safe @nogc nothrow unittest {
+  OSString s1 = OSString("foo");
+  OSString s2 = OSString("foo");
+  assert(s1 == s2);
+  assert(!(s1 > s2));
+  assert(s1 >= s2);
+  assert(!(s1 < s2));
+  assert(s1 <= s2);
 
-  // string equality with other OSString
-  @safe @nogc nothrow unittest {
-    OSString s1 = OSString("foo");
-    OSString s2 = OSString("foo");
-    assert(s1 == s2);
-    assert(!(s1 > s2));
-    assert(s1 >= s2);
-    assert(!(s1 < s2));
-    assert(s1 <= s2);
+  s1 = s1.cat("1");
+  s2 = s2.cat("2");
+  assert(s1 < s2);
+  assert(s1 <= s2);
+  assert(!(s1 >= s2));
+  assert(!(s1 > s2));
+  assert(s1 != s2);
+}
 
-    s1 = s1.cat("1");
-    s2 = s2.cat("2");
-    assert(s1 < s2);
-    assert(s1 <= s2);
-    assert(!(s1 >= s2));
-    assert(!(s1 > s2));
-    assert(s1 != s2);
-  }
-
-  //string concatenation
-  @safe @nogc nothrow unittest {
-    OSString s = OSString("this ");
-        s = s.cat("uses @nogc!\n")
-            .cat("Amazing!");
-    assert(s == "this uses @nogc!\nAmazing!");
-    OSString a1 = OSString("foo");
-    OSString a2 = OSString("bar");
-    a1 = a1.cat(a2);
-    assert(a1 == "foobar");
-  }
+//string concatenation
+@safe @nogc nothrow unittest {
+  OSString s = OSString("this ");
+      s = s.cat("uses @nogc!\n")
+          .cat("Amazing!");
+  assert(s == "this uses @nogc!\nAmazing!");
+  OSString a1 = OSString("foo");
+  OSString a2 = OSString("bar");
+  a1 = a1.cat(a2);
+  assert(a1 == "foobar");
+}
+// string finding
+@safe @nogc nothrow unittest {
+  OSString s = OSString("foobar");
+  size_t where = s.find("bar");
+  assert(where != not_found);
+  assert(where == 3);
+  where = s.find("foo");
+  assert(where != not_found);
+  assert(where == 0);
+  where = s.find("oob");
+  assert(where != not_found);
+  assert(where == 1);
+  where = s.find("baz");
+  assert(where == not_found);
 }

@@ -13,35 +13,40 @@ version(D_BetterC) {
     }
   }
   extern(C) void main(int argc, char **argv) {
-    import core.stdc.stdio : printf;
+    import core.stdc.stdio : printf, fprintf, stderr;
     import core.stdc.time;
+    // run asserts for libcstring
+    static foreach (u; __traits(getUnitTests,libcstring))
+      u();
     printf("%lu\n", OSString.sizeof);
 
       clock_t time = clock();
       foreach (x; 0..1000) {
         cast(void)myStr(argc, argv);
       }
-      printf("Mine: %f\n", cast(double)(clock() - time)/CLOCKS_PER_SEC);
+      fprintf(stderr, "Mine: %f\n", cast(double)(clock() - time)/CLOCKS_PER_SEC);
   }
 
 } else {
   void theirStr(string[] args) {
-    import std.stdio : writeln;
+    import core.stdc.stdio : printf;
+    import std.string : toStringz;
+
     foreach (arg; args) {
       string s = arg;
       s = s ~ "HI";
-      writeln(s);
+      printf("%s\n", s.toStringz);
     }
   }
   int call_main(string[] args) {
+    import core.stdc.stdio : fprintf, printf, stderr;
     import core.stdc.time;
-    import std.stdio : writeln;
-    writeln(string.sizeof);
+    printf("%lu\n", string.sizeof);
     clock_t time = clock();
     foreach (x; 0..1000) {
       cast(void)theirStr(args);
     }
-    writeln("Theirs: ", cast(double)(clock() - time)/CLOCKS_PER_SEC);
+    fprintf(stderr, "Theirs: %f\n", cast(double)(clock() - time)/CLOCKS_PER_SEC);
     return 0;
   }
   extern(D) int main(string[] args) {
